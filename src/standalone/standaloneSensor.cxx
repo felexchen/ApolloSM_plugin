@@ -6,9 +6,10 @@
 #include <boost/tokenizer.hpp>
 #include <unistd.h> // usleep
 #include <signal.h>
+#include <time.h>
 
 // ====================================================================================================
-// Defintions
+// Definitions
 
 typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
 
@@ -24,20 +25,22 @@ struct temperatures {
 bool volatile loop;
 
 void static signal_handler(int const signum) {
+  //fprintf(stderr, "hello\n");
+  //printf("SIGUSR1 is: %d\n", SIGUSR1);
+  //printf("signum is: %d\n", signum);
+  //  if(SIGUSR1 == signum) {
   if(SIGINT == signum) {
-    printf("\n");
     loop = false;
   }
-  return;
 }
 
 // ====================================================================================================
 
-temperatures sendAndParse(ApolloSM** SMptr) {
+temperatures sendAndParse(ApolloSM* SM) {
   temperatures temps;
   
   // read and print
-  std::string recv((*SMptr)->UART_CMD("CM.CM1", "simple_sensor", '%'));
+  std::string recv((SM)->UART_CMD("CM.CM1", "simple_sensor", '%'));
   //printf("\nReceived:\n\n%s\n\n", recv.c_str());
   
   // Separate by line
@@ -62,189 +65,148 @@ temperatures sendAndParse(ApolloSM** SMptr) {
     }
     vecCount++;
   }
-  /*
-  uhal::Node const & nS2_1 = SM->GetNode("SLAVE_I2C.S2.1");
-  uhal::Node const & nS3_1 = SM->GetNode("SLAVE_I2C.S3.1");
-  uhal::Node const & nS4_1 = SM->GetNode("SLAVE_I2C.S4.1");
-  uhal::Node const & nS5_1 = SM->GetNode("SLAVE_I2C.S5.1");
-  */
 
-  float ftemp1 = std::atof(allTokens[0][1].c_str());
-  if(0 > ftemp1) {
-    ftemp1 = 0;
+  // Check for at least one element 
+  // Check for two elements in first element
+  // Following lines follow the same concept
+  if(0 < allTokens.size()) {
+    if(2 == allTokens[0].size()) {
+      float ftemp1 = std::atof(allTokens[0][1].c_str());
+      if(0 > ftemp1) {
+	ftemp1 = 0;
+      }
+      temps.MCUTemp = (uint8_t)ftemp1;
+    }
   }
-  temps.MCUTemp = (uint8_t)ftemp1;
 
-  float ftemp2 = std::atof(allTokens[1][1].c_str());
-  if(0 > ftemp2) {
-    ftemp2 = 0;
+  if(1 < allTokens.size()) {
+    if(2 == allTokens[1].size()) {
+      float ftemp2 = std::atof(allTokens[1][1].c_str());
+      if(0 > ftemp2) {
+	ftemp2 = 0;
+      }
+      temps.FIREFLYTemp = (uint8_t)ftemp2;
+    }
   }
-  temps.FIREFLYTemp = (uint8_t)ftemp2;
 
-  float ftemp3 = std::atof(allTokens[2][1].c_str());
-  if(0 > ftemp3) {
-    ftemp3 = 0;
-  }
-  temps.FPGATemp = (uint8_t)ftemp3;
+  if(2 < allTokens.size()) {
+    if(2 == allTokens[2].size()) {
+      float ftemp3 = std::atof(allTokens[2][1].c_str());
+      if(0 > ftemp3) {
+	ftemp3 = 0;
+      }
+    temps.FPGATemp = (uint8_t)ftemp3;
+    }
+  }    
 
-  float ftemp4 = std::atof(allTokens[3][1].c_str());
-  if(0 > ftemp4) {
-    ftemp4 = 0;
+  if(3 < allTokens.size()) {
+    if(2 == allTokens[3].size()) {
+      float ftemp4 = std::atof(allTokens[3][1].c_str());
+      if(0 > ftemp4) {
+	ftemp4 = 0;
+      }
+      temps.REGTemp = (uint8_t)ftemp4;  
+    }
   }
-  temps.REGTemp = (uint8_t)ftemp4;  
 
   return temps;
 }
 
 // ====================================================================================================
 
-void sendTemps(ApolloSM** SMptr, temperatures temps) {
-  (*SMptr)->RegWriteNode((*SMptr)->GetNode("SLAVE_I2C.S2.1"), temps.MCUTemp);
-  (*SMptr)->RegWriteNode((*SMptr)->GetNode("SLAVE_I2C.S3.1"), temps.FIREFLYTemp);
-  (*SMptr)->RegWriteNode((*SMptr)->GetNode("SLAVE_I2C.S4.1"), temps.FPGATemp);
-  (*SMptr)->RegWriteNode((*SMptr)->GetNode("SLAVE_I2C.S5.1"), temps.REGTemp);
+void sendTemps(ApolloSM* SM, temperatures temps) {
+
+  // TO DO use RegWriteRegister
+
+  (SM)->RegWriteRegister("SLAVE_I2C.S2.1", temps.MCUTemp);
+  (SM)->RegWriteRegister("SLAVE_I2C.S3.1", temps.FIREFLYTemp);
+  (SM)->RegWriteRegister("SLAVE_I2C.S4.1", temps.FPGATemp);
+  (SM)->RegWriteRegister("SLAVE_I2C.S5.1", temps.REGTemp);
+
+//(SM)->RegWriteNode((SM)->GetNode("SLAVE_I2C.S2.1"), temps.MCUTemp);
+//(SM)->RegWriteNode((SM)->GetNode("SLAVE_I2C.S3.1"), temps.FIREFLYTemp);
+//(SM)->RegWriteNode((SM)->GetNode("SLAVE_I2C.S4.1"), temps.FPGATemp);
+//(SM)->RegWriteNode((SM)->GetNode("SLAVE_I2C.S5.1"), temps.REGTemp);
+}
+
+// ====================================================================================================
+
+long elapsed(long startS, long startNS, long stopS, long stopNS) {
+  // 1000000 converts seconds to microseconds. 1000 converts nanoseconds to microseconds
+  return (stopS - startS)*1000000 + (stopNS - startNS)/1000;
 }
 
 // ====================================================================================================
 
 int main(int, char**) {
 
-  //  std::string sendline("simple_sensor");
-
+  // ====================================================================================================
+  // Initialize ApolloSM
   ApolloSM * SM = NULL;
   SM = new ApolloSM();
   std::vector<std::string> arg;
   arg.push_back("connections.xml");
   SM->Connect(arg);
 
-  // read and print
-  //std::string baseNode("CM.CM1"); 
-  
-//std::string recv(SM->UART_CMD(baseNode, sendline, '%'));
-//printf("\nReceived:\n\n%s\n\n", recv.c_str());
-//
-//typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-//
-//// Separate by line
-//boost::char_separator<char> lineSep("\r\n");
-//tokenizer lineTokens{recv, lineSep};
-//
-//// One vector for each line 
-//std::vector<std::vector<std::string> > allTokens;
-//
-//// Separate by spaces
-//boost::char_separator<char> space(" ");
-//int vecCount = 0;
-//// For each line
-//for(tokenizer::iterator lineIt = lineTokens.begin(); lineIt != lineTokens.end(); ++lineIt) {
-//  tokenizer wordTokens{*lineIt, space};
-//  // We don't yet own any memory in allTokens so we append a blank vector
-//  std::vector<std::string> blankVec;
-//  allTokens.push_back(blankVec);
-//  // One vector per line
-//  for(tokenizer::iterator wordIt = wordTokens.begin(); wordIt != wordTokens.end(); ++wordIt) {
-//    allTokens[vecCount].push_back(*wordIt);
-//  }
-//  vecCount++;
-//}
-//
-//// Print all tokens
-//for(int i = 0; i < (int)allTokens.size(); i++) {
-//  printf("Line %d:\n", i); 
-//  for(int j = 0; j < (int)allTokens[i].size(); j++) {
-//    printf("%s   ", allTokens[i][j].c_str());
-//    fflush(stdout);
-//  }
-//  printf("\n");
-//}
-//
-//// Write temperatures to nodes
-//std::string si2cNode("SLAVE_I2C.");
-//
-////std::vector<uhal::Node> si2cNodes;
-////for(int i = 0; i < (int)si2cNodes.size(); i++) {
-////  si2cNodes.push_back(SM->GetNode(si2cNode+"S"+std::to_string(i+2)+".1"));
-////  printf("Created node: %s\n", si2cNodes[i].getPath().c_str());
-////}
-//
-//uhal::Node const & nS2_1 = SM->GetNode(si2cNode+"S2.1");
-//uhal::Node const & nS3_1 = SM->GetNode(si2cNode+"S3.1");
-//uhal::Node const & nS4_1 = SM->GetNode(si2cNode+"S4.1");
-//uhal::Node const & nS5_1 = SM->GetNode(si2cNode+"S5.1");
-//
-//float ftemp1 = std::atof(allTokens[0][1].c_str());
-//if(0 > ftemp1) {
-//  ftemp1 = 0;
-//}
-//uint8_t temp1 = (uint8_t)ftemp1;
-//
-//float ftemp2 = std::atof(allTokens[1][1].c_str());
-//if(0 > ftemp2) {
-//  ftemp2 = 0;
-//}
-//uint8_t temp2 = (uint8_t)ftemp2;
-//
-//float ftemp3 = std::atof(allTokens[2][1].c_str());
-//if(0 > ftemp3) {
-//  ftemp3 = 0;
-//}
-//uint8_t temp3 = (uint8_t)ftemp3;
-//
-//float ftemp4 = std::atof(allTokens[3][1].c_str());
-//if(0 > ftemp4) {
-//  ftemp4 = 0;
-//}
-//uint8_t temp4 = (uint8_t)ftemp4;
-
-//  temperatures temps = sendAndParse(&SM);
-  temperatures temps;  
-
-  //  printf("We got back:\n%d\n%d\n%d\n%d\n", temps.MCUTemp, temps.FIREFLYTemp, temps.FPGATemp, temps.REGTemp);
-/*
-  printf("Writing %s temperature %d to node %s\n", allTokens[0][0].c_str(), temp1, nS2_1.getPath().c_str());
-  printf("Writing %s temperature %d to node %s\n", allTokens[1][0].c_str(), temp2, nS3_1.getPath().c_str()); 
-  printf("Writing %s temperature %d to node %s\n", allTokens[2][0].c_str(), temp3, nS4_1.getPath().c_str()); 
-  printf("Writing %s temperature %d to node %s\n", allTokens[3][0].c_str(), temp4, nS5_1.getPath().c_str()); 
-  
-//printf("Writing %s temperature %d to node %sS2.1\n", allTokens[0][0].c_str(), temp1, si2cNode.c_str()); 
-//printf("Writing %s temperature %d to node %sS3.1\n", allTokens[1][0].c_str(), std::atoi(allTokens[1][1].c_str()), si2cNode.c_str()); 
-//printf("Writing %s temperature %d to node %sS4.1\n", allTokens[2][0].c_str(), std::atoi(allTokens[2][1].c_str()), si2cNode.c_str()); 
-//printf("Writing %s temperature %d to node %sS5.1\n", allTokens[3][0].c_str(), std::atoi(allTokens[3][1].c_str()), si2cNode.c_str());
-
-  SM->RegWriteNode(nS2_1, temp1);
-  SM->RegWriteNode(nS3_1, temp2);
-  SM->RegWriteNode(nS4_1, temp3);
-  SM->RegWriteNode(nS5_1, temp4);
-  */
-  
-//  sendTemps(&SM, temps);
-
+  // ====================================================================================================
+  // Signal handling
   // Catch SIGINT to set loop = false
   struct sigaction sa;
   // Restore old SIGINT action
   struct sigaction oldsa;
   // Instantiate sigaction struct member with signal handler function
   sa.sa_handler = signal_handler;
+  sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, &oldsa);
+  //sigaction(SIGUSR1, &sa, &oldsa);
   loop = true;
 
-  //  timespec ts;
-  //  time_t start;
+  // ====================================================================================================
+  // for counting time
+  struct timespec startTS;
+  struct timespec stopTS;
+
+  // second to microsecond
+  long stous = 1000000;
+  // nanosecond to microsecond
+  //long nstous = 1000;
+  // 10 seconds in microseconds  
+  long sleepTime = 10*stous;
+
+  // ====================================================================================================
+
+  temperatures temps;
 
   while(loop) {
     // start time
-    //    clock_gettime(CLOCK_REALTIME, &ts);
-    //start = ts.tv_sec;
+    clock_gettime(CLOCK_REALTIME, &startTS);
 
-    temps = sendAndParse(&SM);
-    sendTemps(&SM, temps);
-    usleep(10000000);
+    temps = sendAndParse(SM);
+    sendTemps(SM, temps);
+
+    // end time
+    clock_gettime(CLOCK_REALTIME, &stopTS);
+    //printf("%d\n", clock_gettime(CLOCK_MONOTONIC, &stopTS));
+      
+    // sleep for 10 seconds minus how long it took to read and send temperature
+    //    usleep(sleepTime - (stopTS.tv_sec - startTS.tv_sec)*stous - (stopTS.tv_nsec - startTS.tv_nsec)/nstous);
+    usleep(sleepTime - elapsed(startTS.tv_sec, startTS.tv_nsec, stopTS.tv_sec, stopTS.tv_nsec));
+    //usleep(10000000);
+    //printf("Done sleeping\n");
+  }
+  
+  //  printf("Deleting SM\n");
+  if(NULL != SM) {
+    delete SM;
   }
 
+  //  printf("restoring\n");
+  
   // Restore old action of receiving SIGINT (which is to kill program) before returning 
   sigaction(SIGINT, &oldsa, NULL);
-
+  //sigaction(SIGUSR1, &oldsa, NULL);
+  
   printf("Successful kill\n");
-
+  
   return 0;
 }
